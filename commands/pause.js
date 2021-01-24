@@ -5,7 +5,6 @@ const { COLOR } = require("../config.json");
 module.exports = {
   name: "pause",
   description: "Pause the cureent playing Song",
-  aliases: "pa",
   execute (client, message, args) {
   const { channel } = message.member.voice;
    let embed = new MessageEmbed()

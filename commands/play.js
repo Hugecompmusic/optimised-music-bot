@@ -1,115 +1,193 @@
 const { play } = require("../system/music");
-const ytdl = require("ytdl-core");
-const YouTubeAPI = require("simple-youtube-api");
-const scdl = require("soundcloud-downloader");
-const { YOUTUBE_API_KEY, SOUNDCLOUD_CLIENT_ID } = require("../util/EvobotUtil");
-const youtube = new YouTubeAPI(YOUTUBE_API_KEY);
+const { Client, Collection, MessageEmbed } = require("discord.js");
+const { attentionembed } = require("../util/attentionembed");
+const { PREFIX } = require(`../config.json`);
+const ytsr = require("youtube-sr")
 
+////////////////////////////
+//////COMMAND BEGIN/////////
+////////////////////////////
 module.exports = {
   name: "play",
-  cooldown: 3,
   aliases: ["p"],
-  description: "Plays audio from YouTube or Soundcloud",
-  async execute(message, args) {
+  description: "Plays song from YouTube/Stream",
+  cooldown: 1.5,
+  edesc: `Type this command to play some music.\nUsage: ${PREFIX}play <TITLE | URL>`,
+
+async execute(message, args, client) {
+    //If not in a guild return
+    if (!message.guild) return;
+    //define channel
     const { channel } = message.member.voice;
-
+    //get serverqueue
     const serverQueue = message.client.queue.get(message.guild.id);
-    if (!channel) return message.reply("You need to join a voice channel first!").catch(console.error);
+    //If not in a channel return error
+    if (!channel) return attentionembed(message, "Please join a Voice Channel first");
+    //If not in the same channel return error
     if (serverQueue && channel !== message.guild.me.voice.channel)
-      return message.reply(`You must be in the same channel as ${message.client.user}`).catch(console.error);
-
+      return attentionembed(message, `You must be in the same Voice Channel as me`);
+    //If no args return
     if (!args.length)
-      return message
-        .reply(`Usage: ${message.client.prefix}play <YouTube URL | Video Name>`)
-        .catch(console.error);
-
+      return attentionembed(message, `Usage: ${message.client.prefix}play <YouTube URL | Video Name | Soundcloud URL>`);
+    //react with approve emoji
+    message.react("769665713124016128").catch(console.error);
+    //get permissions and send error if bot doesnt have enough
     const permissions = channel.permissionsFor(message.client.user);
     if (!permissions.has("CONNECT"))
-      return message.reply("Cannot connect to voice channel, missing permissions");
+      return attentionembed(message, "I need permissions to join your channel!");
     if (!permissions.has("SPEAK"))
-      return message.reply("I cannot speak in this voice channel, make sure I have the proper permissions!");
+      return attentionembed(message, "I need permissions to speak in your channel");
 
+    //define some url patterns
     const search = args.join(" ");
     const videoPattern = /^(https?:\/\/)?(www\.)?(m\.)?(youtube\.com|youtu\.?be)\/.+$/gi;
-    const playlistPattern = /^.*(list=)([^#\&\?]*).*/gi;
-    const scRegex = /^https?:\/\/(soundcloud\.com)\/(.*)$/;
-    const url = args[0];
     const urlValid = videoPattern.test(args[0]);
 
-    // Start the playlist if playlist url was provided
-    
-
+    //define Queue Construct
     const queueConstruct = {
       textChannel: message.channel,
       channel,
       connection: null,
       songs: [],
       loop: false,
-      volume: 100,
+      volume: 69,
+      filters: [],
+      realseek: 0,
       playing: true
     };
-
+    //get song infos to null
     let songInfo = null;
     let song = null;
-
+    //try catch for errors
+    try {
+      //If something is playing
+      if (serverQueue) {
+        //if its an url
+        if (urlValid) { //send searching link
+          message.channel.send(new MessageEmbed().setColor("#c219d8")
+            .setDescription(`**<:youtube:769675858431705109> Searching 🔍 [\`LINK\`](${args.join(" ")})**`))
+        //if not
+        }
+        else { //send searching TITLE
+          message.channel.send(new MessageEmbed().setColor("#c219d8")
+            .setDescription(`**<:youtube:769675858431705109> Searching 🔍 \`${args.join(" ")}\`**`))
+        }
+      } else {
+        //If nothing is playing join the channel
+        queueConstruct.connection = await channel.join();
+        //send join message
+        message.channel.send(new MessageEmbed().setColor("#c219d8")
+          .setDescription(`**👍 Joined \`${channel.name}\` 📄 bound \`#${message.channel.name}\`**`)
+          .setFooter(`By: ${message.author.username}#${message.author.discriminator}`))
+        //if its an url
+        if (urlValid) { //send searching link
+          message.channel.send(new MessageEmbed().setColor("#c219d8")
+            .setDescription(`**<:youtube:769675858431705109> Searching 🔍 [\`LINK\`](${args.join(" ")})**`))
+          //if not
+        }
+        else { //send searching TITLE
+          message.channel.send(new MessageEmbed().setColor("#c219d8")
+            .setDescription(`**<:youtube:769675858431705109> Searching 🔍 \`${args.join(" ")}\`**`))
+        }
+        //Set selfdeaf and serverdeaf true
+        queueConstruct.connection.voice.setSelfDeaf(true);
+        queueConstruct.connection.voice.setDeaf(true);
+      }
+    }
+    catch {
+    }
+    //if its a valdi youtube link
     if (urlValid) {
       try {
-        songInfo = await ytdl.getInfo(url);
+        songInfo = await ytsr.searchOne(search) ;
         song = {
-          title: songInfo.videoDetails.title,
-          url: songInfo.videoDetails.video_url,
-          duration: songInfo.videoDetails.lengthSeconds
-        };
+          title: songInfo.title,
+          url: songInfo.url,
+          thumbnail: songInfo.thumbnail,
+          duration: songInfo.durationFormatted,
+       };
       } catch (error) {
+        if (error.statusCode === 403) return attentionembed(message, "Max. uses of api Key, please refresh!");
         console.error(error);
-        return message.reply(error.message).catch(console.error);
-      }
-    } else if (scRegex.test(url)) {
-      try {
-        const trackInfo = await scdl.getInfo(url, SOUNDCLOUD_CLIENT_ID);
-        song = {
-          title: trackInfo.title,
-          url: trackInfo.permalink_url,
-          duration: Math.ceil(trackInfo.duration / 1000)
-        };
-      } catch (error) {
-        console.error(error);
-        return message.reply(error.message).catch(console.error);
-      }
-    } else {
-      try {
-        const results = await youtube.searchVideos(search, 1);
-        songInfo = await ytdl.getInfo(results[0].url);
-        song = {
-          title: songInfo.videoDetails.title,
-          url: songInfo.videoDetails.video_url,
-          duration: songInfo.videoDetails.lengthSeconds
-        };
-      } catch (error) {
-        console.error(error);
-        return message.reply(error.message).catch(console.error);
+        return attentionembed(message, error.message);
       }
     }
-
+    //else try to find the song via ytsr
+    else {
+      try {
+       //get the result
+        songInfo = await ytsr.searchOne(search) ;
+        song = {
+          title: songInfo.title,
+          url: songInfo.url,
+          thumbnail: songInfo.thumbnail,
+          duration: songInfo.durationFormatted,
+       };
+      } catch (error) {
+        console.error(error);
+        return attentionembed(message, error);
+      }
+    }
+    //get the thumbnail
+    let thumb = "https://cdn.discordapp.com/attachments/748095614017077318/769672148524335114/unknown.png"
+    if (song.thumbnail === undefined) thumb = "https://cdn.discordapp.com/attachments/748095614017077318/769672148524335114/unknown.png";
+    else thumb = song.thumbnail.url;
+    //if there is a server queue send that message!
     if (serverQueue) {
+      //Calculate the estimated Time
+      let estimatedtime = Number(0);
+      for (let i = 0; i < serverQueue.songs.length; i++) {
+        let minutes = serverQueue.songs[i].duration.split(":")[0];
+        let seconds = serverQueue.songs[i].duration.split(":")[1];
+        estimatedtime += (Number(minutes)*60+Number(seconds));
+      }
+      if (estimatedtime > 60) {
+        estimatedtime = Math.round(estimatedtime / 60 * 100) / 100;
+        estimatedtime = estimatedtime + " Minutes"
+      }
+      else if (estimatedtime > 60) {
+        estimatedtime = Math.round(estimatedtime / 60 * 100) / 100;
+        estimatedtime = estimatedtime + " Hours"
+      }
+      else {
+        estimatedtime = estimatedtime + " Seconds"
+      }
+      //Push the ServerQueue
       serverQueue.songs.push(song);
-      return serverQueue.textChannel
-        .send(`✅ **${song.title}** has been added to the queue by ${message.author}`)
+      //the new song embed
+      const newsong = new MessageEmbed()
+        .setTitle("<:Playing:769665713124016128> " + song.title)
+        .setColor("#c219d8")
+        .setThumbnail(thumb)
+        .setURL(song.url)
+        .setDescription(`\`\`\`Has been added to the Queue.\`\`\``)
+        .addField("Estimated time until playing:", `\`${estimatedtime}\``, true)
+        .addField("Position in queue", `**\`${serverQueue.songs.length - 1}\`**`, true)
+        .setFooter(`Requested by: ${message.author.username}#${message.author.discriminator}`, message.member.user.displayAvatarURL({ dynamic: true }))
+      //send the Embed into the Queue Channel
+        return serverQueue.textChannel
+        .send(newsong)
         .catch(console.error);
+
     }
-
+    //push the song list by 1 to add it to the queu
     queueConstruct.songs.push(song);
+    //set the queue
     message.client.queue.set(message.guild.id, queueConstruct);
-
+    //playing with catching errors
     try {
-      queueConstruct.connection = await channel.join();
-      await queueConstruct.connection.voice.setSelfDeaf(true);
-      play(queueConstruct.songs[0], message);
+
+      //try to play the song
+      play(queueConstruct.songs[0], message, client);
     } catch (error) {
+      //if an error comes log
       console.error(error);
+      //delete the Queue
       message.client.queue.delete(message.guild.id);
+      //leave the channel
       await channel.leave();
-      return message.channel.send(`Could not join the channel: ${error}`).catch(console.error);
+      //sent an error message
+      return attentionembed(message, `Could not join the channel: ${error}`);
     }
   }
 };
